@@ -1,0 +1,35 @@
+# Minimal lab values for the cockroachdb/cockroachdb chart.
+# Insecure mode (no TLS/certs) to keep setup simple - fine for a lab,
+# NOT for anything internet-facing or production.
+
+statefulset:
+  replicas: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "1"
+      memory: 3Gi
+
+conf:
+  # insecure = skips generating/rotating certs entirely
+  insecure: true
+  cache: "25%"
+  max-sql-memory: "25%"
+
+storage:
+  persistentVolume:
+    size: 10Gi
+    storageClass: local-path   # k3s ships local-path-provisioner by default
+
+# One pod per worker node so the 3 CockroachDB replicas
+# actually land on your 3 separate worker VMs.
+tls:
+  enabled: false
+
+topologySpread:
+  enabled: true
+
+networkPolicy:
+  enabled: false
