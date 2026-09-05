@@ -7,10 +7,10 @@ statefulset:
   resources:
     requests:
       cpu: 500m
-      memory: 2Gi
+      memory: 1.5Gi
     limits:
       cpu: "1"
-      memory: 3Gi
+      memory: 2Gi
 
 conf:
   # insecure = skips generating/rotating certs entirely
@@ -23,8 +23,11 @@ storage:
     size: 10Gi
     storageClass: local-path   # k3s ships local-path-provisioner by default
 
-# One pod per worker node so the 3 CockroachDB replicas
-# actually land on your 3 separate worker VMs.
+# NOTE: with only 2 nodes total (1 control + 1 worker), 3 CockroachDB
+# pods cannot each land on a separate node. If topologySpread below
+# causes a pod to get stuck Pending (strict spread requiring 3 nodes),
+# set topologySpread.enabled to false so the scheduler just packs them
+# wherever there's room across the 2 available nodes.
 tls:
   enabled: false
 

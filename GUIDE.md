@@ -5,40 +5,52 @@ Helm charts wherever possible, one control node + 3 worker VMs.
 
 ---
 
-## 1. VM specs
+## 1. VM specs — 2-node topology (1 control + 1 worker)
 
-Kept as small as possible while still leaving CockroachDB usable (it's the
-heaviest component — it will complain/perform badly below ~2 vCPU / 2-4GB
-of cache per node).
+k3s server nodes are schedulable by default (no control-plane taint like
+kubeadm), so with only 2 machines both of them run workloads. That means
+each node needs more headroom than in the 4-node layout, because you're
+packing the same 3 CockroachDB pods + VictoriaMetrics + MetalLB onto 2
+nodes instead of 4.
 
-| Role                | vCPU | RAM  | Disk  | Count |
-|---------------------|------|------|-------|-------|
-| Control node        | 2    | 4 GB | 20 GB | 1     |
-| Worker node         | 2    | 4 GB | 40 GB | 3     |
+| Role                    | vCPU | RAM  | Disk  | Count |
+|-------------------------|------|------|-------|-------|
+| Control node (schedulable) | 4 | 8 GB | 30 GB | 1     |
+| Worker node                | 4 | 8 GB | 40 GB | 1     |
 
 Notes:
-- 40GB disk on workers because each will hold a CockroachDB replica's data
-  (10GB PVC in the provided values) plus container images/logs.
-- If you can spare it, bumping workers to **4GB → 6-8GB RAM** makes
-  CockroachDB noticeably less cramped. 4GB is the "it works" floor, not
-  the comfortable number.
-- OS: any recent Ubuntu Server LTS (22.04/24.04) is the path of least
-  friction with k3s.
-- All 4 VMs need to be able to reach each other over the network, and you
-  need to know one free block of IPs on that same subnet for MetalLB
-  (doesn't need to be VMs — just unused IPs).
+- **Trade-off of going this small:** CockroachDB will still run as a
+  3-pod cluster, but with only 2 physical nodes, at least two of the
+  three pods will always share a node. You get a working distributed SQL
+  cluster and can test the mechanics, but not real machine-level fault
+  tolerance. If you later add a 3rd node, nothing changes config-wise —
+  the scheduler will just spread the pods better automatically.
+- 8GB RAM per node is the realistic floor once a node is running both
+  control-plane components *and* a CockroachDB pod. Going below this
+  risks OOM kills under any real load.
+- 40GB disk on the worker (30GB on control) because pods will be
+  distributed across both, each potentially holding a 10GB CockroachDB
+  PVC.
+- OS: any recent Ubuntu Server LTS (22.04/24.04).
+- Both VMs need to reach each other over the network, and you need a
+  small free block of unused IPs on that same subnet for MetalLB.
+
+**Want it even smaller?** You can go to a single VM (k3s in single-node
+mode, no separate worker at all) — same charts, same values files, just
+skip step 4 (no agent to join). CockroachDB's 3 pods would all share
+one machine, so bump that one VM to ~6 vCPU / 12GB+ if you go this route.
+Say the word and I'll adjust the guide for that instead.
 
 ---
 
 ## 2. Order of operations
 
-1. Provision the 4 VMs, note their IPs.
-2. Run `01-prep-node.sh` on **all 4** VMs.
+1. Provision the 2 VMs, note their IPs.
+2. Run `01-prep-node.sh` on **both** VMs.
 3. Run `02-install-k3s-server.sh` on the **control node**. Save the printed
    token and IP.
-4. Run `03-install-k3s-agent.sh <control-ip> <token>` on **each of the 3
-   workers**.
-5. From the control node, confirm: `kubectl get nodes` → 4 nodes, all `Ready`.
+4. Run `03-install-k3s-agent.sh <control-ip> <token>` on the **1 worker**.
+5. From the control node, confirm: `kubectl get nodes` → 2 nodes, both `Ready`.
 6. Run `04-setup-helm-repos.sh` on the control node.
 7. Edit `manifests/metallb-config.yaml` with a real IP range for your network.
 8. Install MetalLB, apply the IP pool config.
@@ -158,3 +170,8 @@ or leave it ClusterIP and only reach it from inside the cluster.)
 - **CockroachDB TLS disabled (insecure mode)**: cert generation/rotation
   is real operational overhead; fine for a lab, not for anything
   reachable from the internet.
+
+If down the line you want to re-add Istio, add it in the same way you'd
+add it to any cluster — install via Helm, but explicitly skip sidecar
+injection on the CockroachDB and VictoriaMetrics namespaces so the mesh
+doesn't sit in front of your database traffic.
