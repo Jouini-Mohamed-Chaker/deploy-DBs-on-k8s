@@ -32,7 +32,7 @@ tls:
   enabled: false
 
 topologySpread:
-  enabled: true
+  enabled: false
 
 networkPolicy:
   enabled: false

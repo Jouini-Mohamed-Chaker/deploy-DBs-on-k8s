@@ -1,17 +1,144 @@
--- Replace this file with your own schema + seed data.
--- It gets mounted into a one-shot Job and run with `cockroach sql --file=...`
--- Example:
+-- SAIL distributed configuration database schema + seed data
+-- Matches the ERD: PROJECT -> VIRTUAL_MACHINE, PROJECT -> POLICY,
+-- POLICY -> FIREWALL_RULE, VIRTUAL_MACHINE -> FIREWALL_RULE,
+-- VIRTUAL_MACHINE -> AUDIT_LOG, USER -> AUDIT_LOG
 
-CREATE DATABASE IF NOT EXISTS lab;
-USE lab;
+CREATE DATABASE IF NOT EXISTS sail;
+USE sail;
 
-CREATE TABLE IF NOT EXISTS example_items (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name STRING NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT now()
+-- ============================================================
+-- SCHEMA
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS project (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        STRING NOT NULL,
+    description STRING
 );
 
-INSERT INTO example_items (name) VALUES
-    ('item-one'),
-    ('item-two'),
-    ('item-three');
+CREATE TABLE IF NOT EXISTS virtual_machine (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    morpheus_id  STRING,
+    name         STRING NOT NULL,
+    opted_in     BOOL NOT NULL DEFAULT true,
+    status       STRING NOT NULL DEFAULT 'running',
+    project_id   UUID NOT NULL REFERENCES project(id)
+);
+
+CREATE TABLE IF NOT EXISTS policy (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        STRING NOT NULL,
+    description STRING,
+    project_id  UUID NOT NULL REFERENCES project(id)
+);
+
+CREATE TABLE IF NOT EXISTS "user" (
+    id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username STRING NOT NULL UNIQUE,
+    role     STRING NOT NULL DEFAULT 'viewer'
+);
+
+CREATE TABLE IF NOT EXISTS firewall_rule (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    rule_definition STRING NOT NULL,
+    status          STRING NOT NULL DEFAULT 'active',
+    vm_id           UUID NOT NULL REFERENCES virtual_machine(id),
+    policy_id       UUID NOT NULL REFERENCES policy(id)
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    action    STRING NOT NULL,
+    "timestamp" TIMESTAMPTZ NOT NULL DEFAULT now(),
+    user_id   UUID NOT NULL REFERENCES "user"(id),
+    vm_id     UUID NOT NULL REFERENCES virtual_machine(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vm_project ON virtual_machine(project_id);
+CREATE INDEX IF NOT EXISTS idx_policy_project ON policy(project_id);
+CREATE INDEX IF NOT EXISTS idx_rule_vm ON firewall_rule(vm_id);
+CREATE INDEX IF NOT EXISTS idx_rule_policy ON firewall_rule(policy_id);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_vm ON audit_log(vm_id);
+
+-- ============================================================
+-- SEED DATA
+-- Fixed UUIDs used so the relationships below are easy to follow
+-- and the file can be re-run idempotently (upserts).
+-- ============================================================
+
+-- ---- PROJECT (3) ----
+UPSERT INTO project (id, name, description) VALUES
+    ('10000000-0000-0000-0000-000000000001', 'core-infra',    'Core infrastructure and networking services'),
+    ('10000000-0000-0000-0000-000000000002', 'payments',      'Payments processing platform'),
+    ('10000000-0000-0000-0000-000000000003', 'data-platform', 'Analytics and data pipeline workloads');
+
+-- ---- USER (5) ----
+UPSERT INTO "user" (id, username, role) VALUES
+    ('20000000-0000-0000-0000-000000000001', 'alice',   'admin'),
+    ('20000000-0000-0000-0000-000000000002', 'bob',     'operator'),
+    ('20000000-0000-0000-0000-000000000003', 'carol',   'operator'),
+    ('20000000-0000-0000-0000-000000000004', 'dave',    'viewer'),
+    ('20000000-0000-0000-0000-000000000005', 'erin',    'viewer');
+
+-- ---- VIRTUAL_MACHINE (9, 3 per project) ----
+UPSERT INTO virtual_machine (id, morpheus_id, name, opted_in, status, project_id) VALUES
+    ('30000000-0000-0000-0000-000000000001', 'morph-1001', 'core-lb-01',      true,  'running', '10000000-0000-0000-0000-000000000001'),
+    ('30000000-0000-0000-0000-000000000002', 'morph-1002', 'core-dns-01',     true,  'running', '10000000-0000-0000-0000-000000000001'),
+    ('30000000-0000-0000-0000-000000000003', 'morph-1003', 'core-bastion-01', false, 'stopped', '10000000-0000-0000-0000-000000000001'),
+    ('30000000-0000-0000-0000-000000000004', 'morph-2001', 'pay-api-01',      true,  'running', '10000000-0000-0000-0000-000000000002'),
+    ('30000000-0000-0000-0000-000000000005', 'morph-2002', 'pay-api-02',      true,  'running', '10000000-0000-0000-0000-000000000002'),
+    ('30000000-0000-0000-0000-000000000006', 'morph-2003', 'pay-worker-01',   true,  'running', '10000000-0000-0000-0000-000000000002'),
+    ('30000000-0000-0000-0000-000000000007', 'morph-3001', 'data-etl-01',     true,  'running', '10000000-0000-0000-0000-000000000003'),
+    ('30000000-0000-0000-0000-000000000008', 'morph-3002', 'data-warehouse',  true,  'running', '10000000-0000-0000-0000-000000000003'),
+    ('30000000-0000-0000-0000-000000000009', 'morph-3003', 'data-jupyter-01', false, 'stopped', '10000000-0000-0000-0000-000000000003');
+
+-- ---- POLICY (6, 2 per project) ----
+UPSERT INTO policy (id, name, description, project_id) VALUES
+    ('40000000-0000-0000-0000-000000000001', 'core-default-deny',  'Deny all inbound by default for core infra',      '10000000-0000-0000-0000-000000000001'),
+    ('40000000-0000-0000-0000-000000000002', 'core-ssh-bastion',   'Allow SSH only via bastion',                       '10000000-0000-0000-0000-000000000001'),
+    ('40000000-0000-0000-0000-000000000003', 'pay-pci-baseline',   'PCI-DSS baseline network policy for payments',     '10000000-0000-0000-0000-000000000002'),
+    ('40000000-0000-0000-0000-000000000004', 'pay-internal-only',  'Restrict payment workers to internal traffic',     '10000000-0000-0000-0000-000000000002'),
+    ('40000000-0000-0000-0000-000000000005', 'data-etl-egress',    'Allow ETL egress to external data sources',        '10000000-0000-0000-0000-000000000003'),
+    ('40000000-0000-0000-0000-000000000006', 'data-warehouse-lock','Lock down warehouse to analyst subnet only',       '10000000-0000-0000-0000-000000000003');
+
+-- ---- FIREWALL_RULE (15) ----
+UPSERT INTO firewall_rule (id, rule_definition, status, vm_id, policy_id) VALUES
+    ('50000000-0000-0000-0000-000000000001', 'DENY ALL INBOUND',                          'active',   '30000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001'),
+    ('50000000-0000-0000-0000-000000000002', 'DENY ALL INBOUND',                          'active',   '30000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000001'),
+    ('50000000-0000-0000-0000-000000000003', 'ALLOW TCP 22 FROM 10.0.0.5/32',             'active',   '30000000-0000-0000-0000-000000000003', '40000000-0000-0000-0000-000000000002'),
+    ('50000000-0000-0000-0000-000000000004', 'ALLOW TCP 22 FROM 10.0.0.5/32',             'active',   '30000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000002'),
+    ('50000000-0000-0000-0000-000000000005', 'ALLOW TCP 443 FROM 0.0.0.0/0',              'active',   '30000000-0000-0000-0000-000000000004', '40000000-0000-0000-0000-000000000003'),
+    ('50000000-0000-0000-0000-000000000006', 'ALLOW TCP 443 FROM 0.0.0.0/0',              'active',   '30000000-0000-0000-0000-000000000005', '40000000-0000-0000-0000-000000000003'),
+    ('50000000-0000-0000-0000-000000000007', 'DENY TCP 3306 FROM 0.0.0.0/0',              'active',   '30000000-0000-0000-0000-000000000004', '40000000-0000-0000-0000-000000000003'),
+    ('50000000-0000-0000-0000-000000000008', 'ALLOW TCP 5432 FROM 10.1.0.0/16',           'active',   '30000000-0000-0000-0000-000000000006', '40000000-0000-0000-0000-000000000004'),
+    ('50000000-0000-0000-0000-000000000009', 'DENY ALL EXTERNAL',                         'active',   '30000000-0000-0000-0000-000000000006', '40000000-0000-0000-0000-000000000004'),
+    ('50000000-0000-0000-0000-000000000010', 'ALLOW TCP 443 TO 0.0.0.0/0',                'active',   '30000000-0000-0000-0000-000000000007', '40000000-0000-0000-0000-000000000005'),
+    ('50000000-0000-0000-0000-000000000011', 'ALLOW TCP 5439 TO redshift-external.aws',   'active',   '30000000-0000-0000-0000-000000000007', '40000000-0000-0000-0000-000000000005'),
+    ('50000000-0000-0000-0000-000000000012', 'ALLOW TCP 5432 FROM 10.2.0.0/24',           'active',   '30000000-0000-0000-0000-000000000008', '40000000-0000-0000-0000-000000000006'),
+    ('50000000-0000-0000-0000-000000000013', 'DENY ALL FROM 0.0.0.0/0',                   'active',   '30000000-0000-0000-0000-000000000008', '40000000-0000-0000-0000-000000000006'),
+    ('50000000-0000-0000-0000-000000000014', 'ALLOW TCP 8888 FROM 10.2.0.0/24',           'inactive', '30000000-0000-0000-0000-000000000009', '40000000-0000-0000-0000-000000000006'),
+    ('50000000-0000-0000-0000-000000000015', 'ALLOW ICMP FROM 10.0.0.0/8',                'active',   '30000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000001');
+
+-- ---- AUDIT_LOG (20) ----
+UPSERT INTO audit_log (id, action, "timestamp", user_id, vm_id) VALUES
+    ('60000000-0000-0000-0000-000000000001', 'vm.created',        now() - INTERVAL '30 days', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001'),
+    ('60000000-0000-0000-0000-000000000002', 'vm.created',        now() - INTERVAL '30 days', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002'),
+    ('60000000-0000-0000-0000-000000000003', 'vm.stopped',        now() - INTERVAL '20 days', '20000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000003'),
+    ('60000000-0000-0000-0000-000000000004', 'firewall_rule.added', now() - INTERVAL '15 days', '20000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000001'),
+    ('60000000-0000-0000-0000-000000000005', 'vm.opted_out',      now() - INTERVAL '18 days', '20000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000003'),
+    ('60000000-0000-0000-0000-000000000006', 'vm.created',        now() - INTERVAL '25 days', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000004'),
+    ('60000000-0000-0000-0000-000000000007', 'vm.created',        now() - INTERVAL '25 days', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000005'),
+    ('60000000-0000-0000-0000-000000000008', 'policy.attached',   now() - INTERVAL '24 days', '20000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000004'),
+    ('60000000-0000-0000-0000-000000000009', 'firewall_rule.added',now() - INTERVAL '23 days', '20000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000006'),
+    ('60000000-0000-0000-0000-000000000010', 'vm.status_check',   now() - INTERVAL '10 days', '20000000-0000-0000-0000-000000000004', '30000000-0000-0000-0000-000000000004'),
+    ('60000000-0000-0000-0000-000000000011', 'vm.status_check',   now() - INTERVAL '10 days', '20000000-0000-0000-0000-000000000004', '30000000-0000-0000-0000-000000000005'),
+    ('60000000-0000-0000-0000-000000000012', 'vm.created',        now() - INTERVAL '14 days', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000007'),
+    ('60000000-0000-0000-0000-000000000013', 'vm.created',        now() - INTERVAL '14 days', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000008'),
+    ('60000000-0000-0000-0000-000000000014', 'vm.created',        now() - INTERVAL '14 days', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000009'),
+    ('60000000-0000-0000-0000-000000000015', 'firewall_rule.added',now() - INTERVAL '12 days', '20000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000007'),
+    ('60000000-0000-0000-0000-000000000016', 'vm.stopped',        now() - INTERVAL '5 days',  '20000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000009'),
+    ('60000000-0000-0000-0000-000000000017', 'firewall_rule.disabled', now() - INTERVAL '4 days', '20000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000009'),
+    ('60000000-0000-0000-0000-000000000018', 'vm.view',           now() - INTERVAL '3 days',  '20000000-0000-0000-0000-000000000005', '30000000-0000-0000-0000-000000000008'),
+    ('60000000-0000-0000-0000-000000000019', 'vm.view',           now() - INTERVAL '2 days',  '20000000-0000-0000-0000-000000000005', '30000000-0000-0000-0000-000000000006'),
+    ('60000000-0000-0000-0000-000000000020', 'policy.attached',   now() - INTERVAL '1 days',  '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001');
