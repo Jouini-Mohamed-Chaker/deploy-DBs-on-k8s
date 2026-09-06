@@ -10,7 +10,6 @@ if ! command -v helm >/dev/null; then
 fi
 
 echo "==> Adding chart repos"
-helm repo add metallb https://metallb.github.io/metallb
 helm repo add cockroachdb https://charts.cockroachdb.com/
 helm repo add vm https://victoriametrics.github.io/helm-charts/
 helm repo update

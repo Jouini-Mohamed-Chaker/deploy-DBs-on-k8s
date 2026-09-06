@@ -52,12 +52,12 @@ Say the word and I'll adjust the guide for that instead.
 4. Run `03-install-k3s-agent.sh <control-ip> <token>` on the **1 worker**.
 5. From the control node, confirm: `kubectl get nodes` → 2 nodes, both `Ready`.
 6. Run `04-setup-helm-repos.sh` on the control node.
-7. Edit `manifests/metallb-config.yaml` with a real IP range for your network.
-8. Install MetalLB, apply the IP pool config.
-9. Install CockroachDB via Helm with the provided values.
-10. Install VictoriaMetrics via Helm with the provided values.
-11. Seed CockroachDB with your schema/data via the seed Job.
-12. Seed VictoriaMetrics with your metrics file via the seed script.
+7. Install CockroachDB via Helm with the provided values.
+8. Install VictoriaMetrics via Helm with the provided values.
+9. Seed CockroachDB with your schema/data via the seed Job.
+10. Seed VictoriaMetrics with your metrics file via the seed script.
+11. (Optional) Run `06-expose-nodeport.sh` if you want external access
+    without `kubectl port-forward`.
 
 ---
 
@@ -85,18 +85,7 @@ kubectl get nodes
 ./scripts/04-setup-helm-repos.sh
 ```
 
-### Step 7-8: MetalLB
-```bash
-helm install metallb metallb/metallb -n metallb-system --create-namespace
-
-# wait for metallb pods to be Running
-kubectl get pods -n metallb-system
-
-# edit manifests/metallb-config.yaml first, then:
-kubectl apply -f manifests/metallb-config.yaml
-```
-
-### Step 9: CockroachDB
+### Step 7: CockroachDB
 ```bash
 helm install cockroachdb cockroachdb/cockroachdb \
   -f manifests/cockroachdb-values.yaml \
@@ -106,7 +95,7 @@ helm install cockroachdb cockroachdb/cockroachdb \
 kubectl get pods -l app.kubernetes.io/name=cockroachdb -w
 ```
 
-### Step 10: VictoriaMetrics
+### Step 8: VictoriaMetrics
 ```bash
 helm install victoria-metrics vm/victoria-metrics-single \
   -f manifests/victoria-metrics-values.yaml \
@@ -115,7 +104,7 @@ helm install victoria-metrics vm/victoria-metrics-single \
 kubectl get pods -l app.kubernetes.io/name=victoria-metrics-single
 ```
 
-### Step 11: Seed CockroachDB
+### Step 9: Seed CockroachDB
 ```bash
 # put your real schema + data into manifests/schema-and-seed.sql first
 kubectl create configmap cockroachdb-seed \
@@ -127,7 +116,7 @@ kubectl apply -f manifests/cockroachdb-seed-job.yaml
 kubectl logs job/cockroachdb-seed
 ```
 
-### Step 12: Seed VictoriaMetrics
+### Step 10: Seed VictoriaMetrics
 ```bash
 ./scripts/05-seed-victoriametrics.sh /path/to/your/metrics-file.txt
 ```
@@ -136,19 +125,25 @@ kubectl logs job/cockroachdb-seed
 
 ## 4. Exposing things externally (optional)
 
-Since Istio and Traefik are both out of scope, if you want to reach
-CockroachDB's SQL/UI port or VictoriaMetrics' HTTP API from outside the
-cluster, the simplest route is a plain `LoadBalancer` Service, which
-MetalLB will hand a real IP from your pool:
+MetalLB has been dropped from this setup — it's not needed for a lab
+this size. Two options for reaching services from outside the cluster:
 
+**Option A — NodePort (persistent, reachable at any node's IP):**
 ```bash
-kubectl expose deployment victoria-metrics-single-server \
-  --type=LoadBalancer --port=8428 --name=vm-external -n default
+./scripts/06-expose-nodeport.sh
 ```
+This patches `cockroachdb-public` and creates a `vm-external` Service,
+both as `NodePort`. Afterward, reach them at
+`http(s)://<any-node-ip>:<assigned-port>` (script prints the ports).
 
-(CockroachDB's chart already creates a `cockroachdb-public` Service —
-just patch its `type` to `LoadBalancer` if you want external DB access,
-or leave it ClusterIP and only reach it from inside the cluster.)
+**Option B — port-forward (simplest, only while the command is running,
+only reachable from wherever you run it):**
+```bash
+kubectl port-forward svc/cockroachdb-public 26257:26257
+kubectl port-forward svc/victoria-metrics-single-server 8428:8428
+```
+No service changes needed for this option at all — use it if you're just
+checking things yourself and don't need standing external access.
 
 ---
 
@@ -164,9 +159,10 @@ or leave it ClusterIP and only reach it from inside the cluster.)
 - **VictoriaMetrics cluster mode → single-node**: the clustered variant
   (vminsert/vmselect/vmstorage) triples the moving parts for scale you
   don't need at this size.
-- **k3s Traefik + ServiceLB disabled**: you're using MetalLB instead, so
-  the built-in load balancer/ingress would just be dead weight and a
-  possible port conflict.
+- **k3s Traefik + ServiceLB disabled, MetalLB dropped entirely**: none of
+  it is needed for this lab. External access (if you want it at all) goes
+  through plain `NodePort` Services instead — one less component, one
+  less thing that can misconfigure.
 - **CockroachDB TLS disabled (insecure mode)**: cert generation/rotation
   is real operational overhead; fine for a lab, not for anything
   reachable from the internet.
