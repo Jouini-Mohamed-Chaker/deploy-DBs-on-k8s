@@ -1,0 +1,31 @@
+# This is applied automatically by scripts/07-seed-cockroachdb.sh -
+# you shouldn't need to run kubectl commands against it by hand.
+# It re-runs the ConfigMap creation and deletes/reapplies this Job each
+# time, since Jobs don't re-run automatically on their own.
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cockroachdb-seed
+  namespace: default
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: cockroachdb/cockroach:v23.2.6
+          command:
+            - "/cockroach/cockroach"
+            - "sql"
+            - "--insecure"
+            - "--host=cockroachdb-public"
+            - "--file=/seed/seed.sql"
+          volumeMounts:
+            - name: seed-sql
+              mountPath: /seed
+      volumes:
+        - name: seed-sql
+          configMap:
+            name: cockroachdb-seed

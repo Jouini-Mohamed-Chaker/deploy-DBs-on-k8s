@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Run this on the control node, after kubectl get nodes shows all 4 nodes Ready.
+# Run this on the control node as your normal user (NOT with sudo).
+# k3s writes its kubeconfig as world-readable by default, so no sudo
+# is needed here - and using sudo would install Helm repos into root's
+# config instead of yours, causing "repo not found" errors on every
+# later `helm install` you run as yourself.
 set -euo pipefail
 
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
