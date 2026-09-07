@@ -17,8 +17,12 @@ fi
 METRICS_FILE="$1"
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-echo "==> Port-forwarding VictoriaMetrics (Ctrl+C won't stop the import, it runs in background)"
-kubectl port-forward svc/victoria-metrics-single-server 8428:8428 -n default &
+VM_SVC="$(kubectl get svc -n default \
+  -l "app.kubernetes.io/instance=victoria-metrics,app.kubernetes.io/component=server" \
+  -o jsonpath='{.items[0].metadata.name}')"
+
+echo "==> Port-forwarding VictoriaMetrics service: ${VM_SVC}"
+kubectl port-forward "svc/${VM_SVC}" 8428:8428 -n default &
 PF_PID=$!
 sleep 3
 

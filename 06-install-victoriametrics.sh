@@ -13,8 +13,10 @@ helm upgrade --install victoria-metrics vm/victoria-metrics-single \
 
 echo ""
 echo "==> Waiting for VictoriaMetrics pod to become Ready..."
-kubectl rollout status deployment/victoria-metrics-single-server -n default --timeout=180s || \
-  kubectl rollout status statefulset/victoria-metrics-single-server -n default --timeout=180s
+kubectl wait --namespace default \
+  --for=condition=ready pod \
+  -l "app.kubernetes.io/instance=victoria-metrics,app.kubernetes.io/component=server" \
+  --timeout=180s
 
 echo ""
-kubectl get pods -l app.kubernetes.io/name=victoria-metrics-single -n default
+kubectl get pods -l "app.kubernetes.io/instance=victoria-metrics" -n default
