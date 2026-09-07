@@ -64,18 +64,22 @@ VM_SVC="$(kubectl get svc -n default \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 
 if [ -n "${VM_SVC}" ]; then
-  kubectl run vm-health-check --rm -i --restart=Never --image=curlimages/curl -n default -- \
-    curl -s "http://${VM_SVC}.default.svc.cluster.local:8428/health" 2>/dev/null || \
-    echo "VictoriaMetrics not reachable yet"
-else
-  echo "VictoriaMetrics service not found"
-fi
+  kubectl port-forward "svc/${VM_SVC}" 18428:8428 -n default >/tmp/vm-pf.log 2>&1 &
+  PF_PID=$!
+  sleep 3
 
-hr; echo "VICTORIAMETRICS: series count"; hr
-if [ -n "${VM_SVC}" ]; then
-  kubectl run vm-series-check --rm -i --restart=Never --image=curlimages/curl -n default -- \
-    curl -s "http://${VM_SVC}.default.svc.cluster.local:8428/api/v1/series/count" 2>/dev/null || \
-    echo "Could not fetch series count"
+  echo "Health:"
+  curl -s http://localhost:18428/health || echo "(curl failed - see /tmp/vm-pf.log)"
+  echo ""
+
+  echo "Series count:"
+  curl -s "http://localhost:18428/api/v1/series/count" || echo "(curl failed - see /tmp/vm-pf.log)"
+  echo ""
+
+  kill "${PF_PID}" 2>/dev/null || true
+  wait "${PF_PID}" 2>/dev/null || true
+else
+  echo "VictoriaMetrics service not found - is it installed? (06-install-victoriametrics.sh)"
 fi
 
 hr; echo "Done."; hr
